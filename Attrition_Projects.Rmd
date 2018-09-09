@@ -1,0 +1,432 @@
+---
+title: "IBM Attrition Data Set"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/Users/k.vincent/Desktop/MSBA Course - summer 2018/intro to predictive modeling/Project")
+attribution = read.csv("WA_Fn-UseC_-HR-Employee-Attrition.csv")
+```
+
+####__Group Project  - July 23, 2018__
+
+
+This is a course project in MS Business Analytics, seeking to determine which factors and to what degree each factor is driving employee attrition.
+We get the data from IBM Data Science Team Kaggle.com - HR Analytics
+
+Setups: 
+```{r}
+library(ggplot2)
+library(caret)
+library(MASS)
+library(tree)
+library(knitr)
+library(randomForest)
+library(gbm)
+library(corrplot)
+library(glmnet)
+library(e1071)
+```
+
+
+<br>
+
+####__1. Data Cleaning__
+
+Overview
+```{r}
+# Overview: 1470 obs. of  35 variables
+str(attribution)
+```
+
+Change Strings to multi-level factors:
+```{r}
+attribution$Attrition = as.factor(attribution$Attrition)
+attribution$BusinessTravel = as.factor(attribution$BusinessTravel)
+attribution$Department = as.factor(attribution$Department)
+attribution$EducationField = as.factor(attribution$EducationField)
+attribution$Gender = as.factor(attribution$Gender)
+attribution$JobRole = as.factor(attribution$JobRole)
+attribution$MaritalStatus = as.factor(attribution$MaritalStatus)
+attribution$OverTime = as.factor(attribution$OverTime)
+```
+
+```{r}
+#na?
+any(is.na(attribution))
+```
+
+Remove Columns: Over18, EmployeeCount, EmployeeNumber, standardhour, which are not relevant to Attrition. 
+```{r}
+#na?
+attribution = attribution[ , c(-9,-10,-22, -27)]
+```
+
+
+####__2. EDA: Correlation__
+
+```{r}
+numerical = unlist(lapply(attribution, is.numeric))
+M = cor(attribution[, numerical])
+corrplot.mixed(M, tl.cex=0.6)
+```
+
+As a result:<br>
+JobLevel & MonthlyIncome: 0.95 <br>
+JobLevel & WorkingYears: 0.78<br>
+PercentSalaryHike & Performance Rating: 0.77<br>
+MonthlyIncome & Working Years: 0.77<br>
+YearsatCompany & YearsCurrManager: 0.77<br>
+YearsatCompany & YearInCurrentRole: 0.76<br>
+YearInCurrentRole & YearsCurrManager: 0.71<br>
+Age & WorkingYears: 0.68<br>
+WorkingYears & YearsatCompany: 0.63<br>
+YearsatCompany & YearssinceLastPromotion: 0.62<br>
+
+####__3. EDA: Visualization of each independent variable against Attrition__
+```{r}
+ggplot(attribution, aes(x=Age, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Those who travel frequently are more likely to leave
+g = ggplot(attribution, aes(x = Attrition, group = BusinessTravel)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g +facet_grid(.~BusinessTravel) + ggtitle("BusinessTravel")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# attrition under dailyRate: people with lower dailyrate tend to leave
+ggplot(attribution, aes(x=DailyRate, fill=Attrition)) + geom_density(alpha=0.3)
+
+# People in Sales are more likely to leave
+g = ggplot(attribution, aes(x =Attrition , group = Department))+geom_bar(aes(y = ..prop..), stat="count", fill = "#FFA500", alpha=0.3)
+g +facet_grid(.~Department) + ggtitle("Department")+theme_bw() + geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# People live far way tend to leave
+ggplot(attribution, aes(x=DistanceFromHome, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Higher the education level,more likely to stay
+g = ggplot(attribution, aes(x = Attrition, group = Education)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~Education) + ggtitle("Education")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Those with HR, Marketing and Technical education background are more likely to leave 
+g = ggplot(attribution, aes(x = Attrition, group = EducationField)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~EducationField) + ggtitle("EducationField")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Environment satisfaction is important
+g = ggplot(attribution, aes(x = Attrition, group = EnvironmentSatisfaction)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~EnvironmentSatisfaction) + ggtitle("EnvironmentSatisfaction")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Males are more likely to leave
+g = ggplot(attribution, aes(x = Attrition, group = Gender)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~Gender) + ggtitle("Gender")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Hourly Rate: lower rate made people leave
+ggplot(attribution, aes(x=HourlyRate, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Job involvement matters(a lot)
+g = ggplot(attribution, aes(x = Attrition, group = JobInvolvement)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~JobInvolvement) + ggtitle("JobInvolvement")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Job Level matters
+g = ggplot(attribution, aes(x = Attrition, group = JobLevel)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~JobLevel) + ggtitle("JobLevel")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Job role matters(HR, laboratory technician and sales representatives are more likely to leave)
+g = ggplot(attribution, aes(x = Attrition, group = JobRole)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~JobRole) + ggtitle("JobRole")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", hjust=0.3,vjust = -.3)
+
+# Job satisfaction matters(a lot)
+g = ggplot(attribution, aes(x = Attrition, group = JobSatisfaction)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~JobSatisfaction) + ggtitle("JobSatisfaction")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Single people tend to leave
+g = ggplot(attribution, aes(x = Attrition, group = MaritalStatus)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~MaritalStatus) + ggtitle("MaritalStatus")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Monthly income Yes
+ggplot(attribution, aes(x=MonthlyIncome, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Monthly Rate : not clear
+ggplot(attribution, aes(x=MonthlyRate, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Num of company worked: Yes
+ggplot(attribution, aes(x=NumCompaniesWorked, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Those who work overtime are more likely to leave
+g = ggplot(attribution, aes(x =Attrition , group = OverTime)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~OverTime) + ggtitle("OverTime")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Percent Salary Hike: yes
+ggplot(attribution, aes(x=PercentSalaryHike, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Performance Rating： no
+ggplot(attribution, aes(x=PerformanceRating, fill=Attrition)) + geom_density(alpha=0.3)
+
+
+ggplot(attribution, aes(x=StockOptionLevel, fill=Attrition)) + geom_density(alpha=0.3)
+
+
+ggplot(attribution, aes(x=TotalWorkingYears, fill=Attrition)) + geom_density(alpha=0.3)
+
+# TrainingTimesLastYear: no
+ggplot(attribution, aes(x=TrainingTimesLastYear, fill=Attrition)) + geom_density(alpha=0.3)
+
+# Worklifebalance(higher worklifebalance score-->stay, but the highest score4 is an exception)
+g = ggplot(attribution, aes(x = Attrition, group = WorkLifeBalance)) + geom_bar(aes(y = ..prop..), stat="count", fill="#FFA500", alpha=0.3)
+g + facet_grid(.~WorkLifeBalance) + ggtitle("WorkLifeBalance")+theme_bw()+geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.3)
+
+# Years at Company matters
+ggplot(attribution, aes(x=YearsAtCompany, fill=Attrition)) + geom_density(alpha=0.3)
+
+ggplot(attribution, aes(x=YearsInCurrentRole, fill=Attrition)) + geom_density(alpha=0.3)
+
+# YearSinceLastPromotion: no
+ggplot(attribution, aes(x=YearsSinceLastPromotion, fill=Attrition)) + geom_density(alpha=0.3)
+
+# YearswithCurrent manager matters
+ggplot(attribution, aes(x=YearsWithCurrManager, fill=Attrition)) + geom_density(alpha=0.3)
+```
+
+####__4. Modeling__
+
+We can consider logistic regression, boosting, random forest, knn.'
+
+As the data nature is highly unbalanced: most of them have attrition "No", we decided to add a threshold for the models.
+For each model, we tested different threshold and pick the one that makes the best prediction.
+
+We use accuracy, percentage of people who leaves / people we predict to leave, and percentage of people leave / people we predict to stay to compare the models because our emphasis on predicting people who intend to leave the company.
+
+######__Performance Measurement Criteria__
+```{R}
+calc_acc = function(actual, predicted) {
+mean(actual == predicted)
+}
+# how many people actually leaves when we predicted them to leave
+calc_stay = function(TP, FP){
+TP / (TP + FP)
+}
+calc_leave = function(y, x){
+x / (x + y)
+}
+```
+
+We use 70% of our dataset as traning data.
+```{R}
+set.seed(432)
+index = sample(nrow(attribution), size = trunc(0.7 * nrow(attribution)))
+32
+train_data= attribution[index, ]
+test_data = attribution[-index, ]
+```
+
+######__Logistic__
+First, We start with Logistic Regression and we used mixed selection to get 18 important variables. From the model summary, we can see that each variable is significant.
+
+Modeling and Feature Selection using step-wise: 
+```{R}
+set.seed(432)
+null = glm(Attrition~1, data=train_data, family="binomial")
+log.fit =glm(Attrition~., data=train_data, family="binomial")
+regboth = step(null, scope=formula(log.fit), direction="both", trace=0)
+log.fit = glm(Attrition ~ OverTime + JobRole + JobInvolvement +
+MaritalStatus + JobSatisfaction + EnvironmentSatisfaction +
+BusinessTravel + DistanceFromHome + YearsInCurrentRole +
+YearsSinceLastPromotion + TrainingTimesLastYear + Age +
+NumCompaniesWorked + RelationshipSatisfaction + WorkLifeBalance +
+YearsWithCurrManager + YearsAtCompany + TotalWorkingYears, data = train_data, family="binomial")
+summary(log.fit)
+```
+
+After testing, a threshold of 0.7 maximize out-of-sample accuracy. 
+Threshold setting: 
+```{R}
+log_pred = ifelse(predict(log.fit, newdata = test_data, type = "response") >= 0.7, 'Yes', 'No')
+t1 = table(predicted = log_pred, actual = test_data$Attrition)
+t1
+
+```
+
+######__KNN__
+In Knn, we use the features above and apply 10-fold validation to tune the parameter k of knn.
+```{R}
+library(class) 
+library(kknn) 
+
+df_non_dummy<- attribution[,c(-3,-5,-8,-10,-14,-16,-20)]
+x<- scale(df_non_dummy[,-2])
+dfready<- data.frame(x)
+dfready[,24]<- df_non_dummy[,2]
+colnames(dfready)[24]<- "Attrition"
+train <- sample(1:1470,0.8*1470)
+a = 1:1470
+test = a[-train]
+nearest5 <- kknn(Attrition~., dfready[train,],dfready[-train,], k=5)
+
+
+fit<- function(kknnprob, thres = 0.5){
+  ft<- factor(c("Yes","No"))
+  for(i in 1:nrow(kknnprob)){
+    if(kknnprob[,2][i]>thres){
+      ft[i] = "Yes"
+    }
+    else{
+      ft[i]= "No"
+    }
+  }
+  return(ft)
+}
+
+dfready<-data.frame(c(dfready, attribution[,c(3,5,8,10,14,16,20)]))
+#model 
+"Attrition ~ Age + OverTime + MaritalStatus + JobRole + BusinessTravel + 
+    NumCompaniesWorked + JobInvolvement + JobSatisfaction + DistanceFromHome + 
+YearsInCurrentRole + YearsSinceLastPromotion + TotalWorkingYears + 
+RelationshipSatisfaction + DailyRate + TrainingTimesLastYear + 
+StockOptionLevel"
+
+n = nrow(dfready)
+kcv = 10
+n0 = round(n/kcv,0)
+
+out_MSE = matrix(0,kcv,100)
+
+used = NULL
+set = 1:n
+
+for(j in 1:kcv){
+  
+  if(n0<length(set)){val = sample(set,n0)}
+  
+  if(n0>=length(set)){val=set}
+  
+  train_i = dfready[-val,]
+  test_i = dfready[val,]
+  
+  
+  for(i in 11:110){
+    
+    near = kknn(Attrition ~ Age
+                +                     NumCompaniesWorked + JobInvolvement + JobSatisfaction + DistanceFromHome + 
+                  +                     YearsInCurrentRole + YearsSinceLastPromotion + TotalWorkingYears + 
+                  +                     RelationshipSatisfaction + DailyRate + TrainingTimesLastYear + 
+                  +                     StockOptionLevel + BusinessTravel + Department + EducationField + Gender+JobRole + MaritalStatus + OverTime ,train_i,test_i,k=i,kernel = "rectangular")
+    localCount = 0
+    ft<- fit(near$prob, 0.27)
+    for(g in 1:nrow(test_i)){
+      if(test_i[g,"Attrition"]!=ft[g]){
+        localCount = localCount+1
+      }
+    }
+    
+    out_MSE[j,i-10] = localCount
+  }
+  
+  used = union(used,val)
+  set = (1:n)[-used]
+  
+  cat(j,'\n')
+  
+}
+mMSE = apply(out_MSE,2,mean)
+best = which.min(mMSE)
+print(1-(mMSE[best]/nrow(test_i)))
+
+
+plot(log(1/(1:100)),sqrt(mMSE),xlab="Complexity (log(1/k))",ylab="out-of-sample RMSE",col=4,lwd=2,type="l",cex.lab=1.2,main=paste("kfold(",kcv,")"))
+best = which.min(mMSE)
+text(log(1/best),sqrt(mMSE[best])-0.005,paste("k=",best),col=2,cex=1)
+text(log(1/11)+2.25,sqrt(mMSE[2])-0.3+0.27,paste("k=",11),col=2,cex=1)
+text(log(1/110)+0.3,sqrt(mMSE[100]),paste("k=",110),col=2,cex=1)
+```
+
+######__Boosting__
+```{R}
+set.seed(432)
+train_data_copy = train_data
+train_data_copy$Attrition = ifelse(train_data_copy$Attrition == "No", 0, 1)
+boosting_1 = gbm(Attrition~., data=train_data_copy, distribution="bernoulli", n.trees=1000, shrinkage = 0.01)
+summary(boosting_1)
+```
+
+After adjusting the shrinkage and n.minobsinnode:
+```{R}
+set.seed(432)
+boosting_1 = gbm(Attrition~.-PerformanceRating-Gender-Department, data=train_data_copy, distribution="bernoulli", n.trees=1000, shrinkage =0.01, n.minobsinnode =4)
+boo_pred = ifelse(predict(boosting_1, newdata = test_data, n.trees = 1000, type="response")>0.45, 'Yes', 'No')
+t6=table(predicted = boo_pred, actual = test_data$Attrition)
+t6
+```
+
+######__Random Forest__
+We start by fitting all the variables in the model and then take out the least important variable according to importance plots, until all existing features have positive importance. 
+```{R}
+set.seed(432)
+rf_1 = randomForest(Attrition~., data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_1, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_1)
+
+set.seed(432)
+rf_2 = randomForest(Attrition~.-MonthlyRate, data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_2, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_2)
+
+set.seed(432)
+rf_3 = randomForest(Attrition~.-MonthlyRate - PerformanceRating, data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_3, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_3)
+
+set.seed(432)
+rf_4 = randomForest(Attrition~.-MonthlyRate - PerformanceRating - TrainingTimesLastYear, data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_4, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_4)
+
+set.seed(432)
+rf_5 = randomForest(Attrition~.-MonthlyRate - PerformanceRating - TrainingTimesLastYear - Gender, data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_5, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_5)
+
+set.seed(432)
+rf_6 = randomForest(Attrition~.-MonthlyRate - PerformanceRating - TrainingTimesLastYear - Gender - WorkLifeBalance , data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_6, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_6)
+
+set.seed(432)
+rf_7 = randomForest(Attrition~.-MonthlyRate - PerformanceRating - TrainingTimesLastYear - Gender - WorkLifeBalance - PercentSalaryHike, data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_7, newdata = test_data, type = "prob")[ ,1] >= 0.7, 'No', 'Yes')
+table(rf_pred, test_data$Attrition)
+varImpPlot(rf_7)
+
+set.seed(432)
+rf_8 = randomForest(Attrition~.-MonthlyRate - PerformanceRating - TrainingTimesLastYear - Gender - WorkLifeBalance - PercentSalaryHike - DailyRate, data = train_data, importance=TRUE)
+rf_pred = ifelse(predict(rf_8, newdata = test_data, type = "prob")[ ,1] >= 0.6, 'No', 'Yes')
+t4=table(rf_pred, test_data$Attrition)
+t4
+varImpPlot(rf_8)
+```
+
+
+######__naivebayes__
+
+```{R}
+set.seed(56)
+nb_1 = naiveBayes(Attrition~., data = train_data, prior=c(1233, 237)/1470)
+nb_pred = ifelse(predict(nb_1, test_data, type = "raw")[ ,1]>=0.1, 'No', 'Yes')
+calc_acc(nb_pred, test_data$Attrition)
+
+t7=table(predicted = nb_pred, actual = test_data$Attrition)
+t7
+```
+
+
+To Summary, 5 models were considered and tuned with feature selection and/or parameter validation. For model summary, review model summary file. 
+
+
+
+
+
+
+
