@@ -5,7 +5,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-setwd("/Users/k.vincent/Desktop/MSBA Course - summer 2018/intro to predictive modeling/Project")
+setwd("/Users/k.vincent/Desktop/predictive modeling/Project")
 attribution = read.csv("WA_Fn-UseC_-HR-Employee-Attrition.csv")
 ```
 
